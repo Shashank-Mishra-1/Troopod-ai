@@ -1,38 +1,68 @@
-# AI PM Assignment - Troopod
+# AI PM Assignment — Troopod
+### Author: Shashank Mishra
+
+---
 
 ## Working Flow
 
-The system acts as a smart personalization bridge between an ad creative (source of intent, tone, imagery) and a static landing page (destination). The flow is broken down into four steps:
+The system is a smart personalization bridge between an **ad creative** (source of intent, tone, and offer) and a **static landing page** (the conversion destination). The goal is to eliminate the tone mismatch that kills ad conversion rates.
 
-1. **Input Phase**: User inputs an Ad Creative context (URL or descriptive text) and a target Landing Page URL.
-2. **Analysis (Agent 1)**: The Ad Creative is passed to an analysis prompt that extracts the key selling points, tone formatting, and specific visual or semantic constraints.
-3. **Extraction & Routing**: A scraper reads the target URL's HTML structure. To prevent the LLM from hallucinating entirely new websites, we parse the raw HTML to extract the text nodes (Headers, Paragraphs, Call to Actions) while preserving their structural IDs and classes.
-4. **Personalization (Agent 2)**: The Landing Page Personalizer Agent evaluates the extracted text alongside the Ad Analysis. It rewrites the page copy to align with the ad creative's tone while adhering to length constraints of the original containers.
-5. **Reassembly & Output**: The modified copy is injected back into the original HTML structure and rendered to the user as the final personalized landing page.
+The flow runs in five sequential steps:
+
+1. **Input Phase** — The user provides an Ad Creative context (text description of the ad offer/tone) and a target Landing Page URL.
+2. **Scraping & Extraction** — A backend scraper (Axios) fetches the target page's HTML. A DOM parser (Cheerio) then walks the HTML tree and extracts only *text nodes* (headings, paragraphs, buttons, links) — assigning each a temporary internal ID. The HTML structure itself is preserved untouched.
+3. **Ad Analysis (Agent 1)** — The ad creative is interpreted to extract core constraints: the central offer (e.g., "30% off"), target audience, urgency signals, and tone direction. These are treated as **immutable facts** that the rewriter must honor.
+4. **Copy Personalization (Agent 2)** — The extracted text nodes and ad constraints are sent together to the LLM. The LLM is instructed to return a JSON map of `{ tempId: rewritten_copy }`, modifying only the text that needs to change to align with the ad intent.
+5. **Reassembly & Preview** — The modified texts are patched back into the original HTML by matching temp IDs. A `<base>` tag is injected to ensure all relative CSS, images, and JS resolve to the original domain. The result renders in a side-by-side iframe preview.
 
 ---
 
 ## Key Components / Agent Design
 
-Our system orchestrates a dual-agent workflow powered by Gemini (or any configurable LLM):
-- **Ad Analyzer Agent**: Focused heavily on reading the input ad to find "hooks". If an ad promises "50% off for students," this Agent extracts this as an immutable fact to enforce later.
-- **Copywriter Agent**: This agent receives the original landing page text and the analyzer's output. It operates under strict system instructions: "Rewrite the copy to match the tone of the context. Maintain original text length where possible. Do not invent features."
-- **DOM Parser Middleware**: Essential for maintaining structural integrity. By separating the DOM from the Text content before sending it to the LLM, we save tokens and drastically reduce structural breakage.
+### DOM Parser Middleware (Cheerio)
+The most critical safeguard in the system. Instead of feeding raw HTML to the LLM, we surgically extract only the **text content** and pass it as a structured JSON array. This achieves three goals simultaneously:
+- Prevents the LLM from modifying HTML structure (eliminating broken UI)
+- Massively reduces token consumption (only text, not markup)
+- Enables deterministic patching — the LLM's JSON output maps 1:1 back to DOM nodes
 
-> **On-Premise / Local LLM Integration**: Note that while this assignment uses a managed API (Gemini) for ease of demonstration, the exact same agent logic can be deployed on-premises. I have previously built a similar personalized page flow. If privacy or latency are concerns or you need self-hosting, an open-weight model like Llama 3 (e.g., via vLLM or Ollama) can seamlessly replace the managed API calls. The architecture and parser remain identical; only the inference endpoint changes in the backend.
+### Copywriter Agent (LLM)
+Powered by **Groq's LLaMA 3.3 70B Versatile** via the Groq API. Key configuration choices:
+- `temperature: 0.2` — near-deterministic outputs, minimal variation between runs
+- `response_format: json_object` — forces clean JSON, prevents conversational filler
+- System prompt explicitly instructs: *"Do not invent features, discounts, or claims not present in the Ad Creative."*
+
+### On-Premise / Local LLM Deployment
+> I've built similar AI pipelines on-prem before — this is not theoretical.
+
+This system is **inference-endpoint agnostic by design**. The agent logic, DOM parser, and prompt engineering are completely decoupled from the LLM provider. Swapping between cloud APIs and self-hosted models requires changing only a single endpoint URL in the backend.
+
+For on-premise deployment, I have direct hands-on experience with:
+- **Ollama** — running LLaMA 3, Mistral, and Gemma locally on single machines (Mac/Linux), ideal for low-volume internal tooling
+- **vLLM** — production-grade, multi-GPU server inference with OpenAI-compatible API; drop-in replacement for the Groq call in this codebase
+- **LM Studio** — rapid local prototyping, useful for validating prompt behavior before deploying to servers
+
+The on-prem path becomes especially relevant in B2B SaaS or enterprise ad-tech contexts where scraped landing page data may contain proprietary client information that shouldn't leave the network perimeter.
 
 ---
 
 ## Error Handling & Edge Cases
 
-### Random Changes & Inconsistent Outputs
-LLMs naturally suffer from inconsistent variations per request due to high temperatures.
-**Solution**: We enforce a `temperature: 0.1` constraint (highly deterministic) for the Copywriter Agent. We also structure the agent responses into strict JSON formats mapping an element's ID to its new text, preventing the LLM from outputting conversational filler.
+### 1. Inconsistent / Random Outputs
+**Problem:** High LLM temperature leads to different copy on every run — unpredictable for production use.  
+**Solution:** Temperature locked to `0.2`. Combined with `response_format: json_object`, the model's output variance is extremely low. The structured output format also prevents the model from returning narrative text mixed with JSON.
 
-### Broken UI
-Prompting an LLM to "rewrite this HTML" typically results in broken divs, mismatched tags, and a ruined UI.
-**Solution**: We do not ask the LLM to write HTML. Instead, we extract only the text arrays (`["Welcome to our site", "Buy now"]`) and ask the LLM to return a corresponding array of equal size (`["50% Student Discount", "Claim Discount"]`). The Next.js API route cleanly patches the text back into the React components or HTML string.
+### 2. Broken UI
+**Problem:** Asking an LLM to "rewrite the HTML" results in malformed tags, broken divs, and missing closing elements.  
+**Solution:** The LLM never touches HTML. It only receives an array of text strings and returns a corresponding JSON map. The DOM patcher then applies edits node-by-node using the temp ID system. The HTML structure cannot be corrupted because the model is architecturally prevented from modifying it.
 
-### Hallucinations
-A classic error is the LLM inventing features (e.g., "Free Shipping") just because it sounds persuasive.
-**Solution**: The Ad Analyzer Agent categorizes facts into a "Strict Guidelines" object. The Copywriter Agent's prompt is heavily grounded with: "Do not add any benefits, claims, or discounts that are not explicitly present in the Ad Guidelines." Furthermore, restricting the rewrite to just structural swap-ins leaves less room for the LLM to invent long paragraphs of irrelevant narrative.
+### 3. Hallucinations
+**Problem:** LLMs tend to add persuasive but fabricated claims ("Free shipping!", "Award-winning!") that don't exist in the ad.  
+**Solution:** The system prompt includes a hard constraint: *"Only rewrite text to reflect the tone and offer present in the Ad Creative. Do not add, infer, or fabricate any features, discounts, or claims."* Additionally, because modifications are applied as targeted text swaps (not freeform generation), there is no opportunity for the model to inject invented paragraphs.
+
+### 4. Subresource Integrity (SRI) / CORS Blocking
+**Problem:** Many modern sites (like Bootstrap's CDN) attach `integrity` and `crossorigin` attributes to their `<link>` and `<script>` tags. When these are rendered inside a sandboxed `srcDoc` iframe on a different origin, browsers block them entirely — resulting in an unstyled page.  
+**Solution:** The DOM parser strips `integrity` and `crossorigin` attributes from all assets before the HTML is sent to the client. Combined with the `<base>` tag injection, the iframe renders with full fidelity.
+
+---
+
+*For technical setup, deployment instructions, and the full system diagram, see [README.md](./README.md)*
