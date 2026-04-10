@@ -16,7 +16,7 @@ The output is a **side-by-side live preview** of the original page vs. the AI-pe
 
 ## Live Demo
 
-> 🔗 **[Insert Vercel URL here after deployment]**
+> 🔗 **[troopod-ai.vercel.app](https://troopod-ai.vercel.app)**
 
 **Try this demo input:**
 - **Ad Creative:** `"Flash Sale! 30% off all plans for a limited time. Urgent, high-energy tone."`
