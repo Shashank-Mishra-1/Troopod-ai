@@ -5,15 +5,17 @@
 
 ## Working Flow
 
-The system is a smart personalization bridge between an **ad creative** (source of intent, tone, and offer) and a **static landing page** (the conversion destination). The goal is to eliminate the tone mismatch that kills ad conversion rates.
+The system is a smart **CRO (Conversion Rate Optimization) personalization engine** that bridges the gap between an **ad creative** and its destination **landing page**. The core insight is simple: when a user clicks an ad promising "30% off", they should land on a page that speaks that exact language — same offer, same tone, same urgency. The gap between ad copy and landing page copy is one of the biggest conversion killers in digital marketing.
+
+> **Key Design Principle:** We do NOT generate a new page. We enhance the existing page. The original layout, design, images, trust signals, nav, and footer are all preserved intact. Only the copy (headings, hero text, CTAs, body paragraphs) is rewritten to achieve message match with the ad creative. This is structurally identical to how enterprise CRO tools like Unbounce Smart Traffic and VWO's AI personalization work — but orchestrated through our own agent pipeline.
 
 The flow runs in five sequential steps:
 
 1. **Input Phase** — The user provides an Ad Creative context (text description of the ad offer/tone) and a target Landing Page URL.
 2. **Scraping & Extraction** — A backend scraper (Axios) fetches the target page's HTML. A DOM parser (Cheerio) then walks the HTML tree and extracts only *text nodes* (headings, paragraphs, buttons, links) — assigning each a temporary internal ID. The HTML structure itself is preserved untouched.
 3. **Ad Analysis (Agent 1)** — The ad creative is interpreted to extract core constraints: the central offer (e.g., "30% off"), target audience, urgency signals, and tone direction. These are treated as **immutable facts** that the rewriter must honor.
-4. **Copy Personalization (Agent 2)** — The extracted text nodes and ad constraints are sent together to the LLM. The LLM is instructed to return a JSON map of `{ tempId: rewritten_copy }`, modifying only the text that needs to change to align with the ad intent.
-5. **Reassembly & Preview** — The modified texts are patched back into the original HTML by matching temp IDs. A `<base>` tag is injected to ensure all relative CSS, images, and JS resolve to the original domain. The result renders in a side-by-side iframe preview.
+4. **Copy Personalization (Agent 2)** — The extracted text nodes and ad constraints are sent together to the LLM. The LLM is instructed to return a JSON map of `{ tempId: rewritten_copy }`, modifying only the text that needs to change to align with the ad intent — following CRO best practices like urgency, benefit-led headlines, and offer clarity.
+5. **Reassembly & Preview** — The modified texts are patched back into the original HTML by matching temp IDs. A `<base>` tag is injected to ensure all relative CSS, images, and JS resolve to the original domain. The result renders in a **side-by-side Before/After iframe** — the same page, enhanced.
 
 ---
 
